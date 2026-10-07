@@ -1,0 +1,53 @@
+# The router is stateless and horizontally scalable. It is configured with the
+# stable StatefulSet DNS names for the full node range (tsdb-node-0..7). Nodes
+# that don't exist yet (before the HPA scales up) simply fail the router's
+# health probe and stay out of the hash ring; when a pod comes up the router's
+# recovery path adds it back. This lets a static node list track a dynamically
+# scaled StatefulSet without a separate discovery service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tsdb-router
+  labels: { app: tsdb-router }
+spec:
+  type: ClusterIP
+  selector: { app: tsdb-router }
+  ports:
+    - { name: grpc, port: 50050, targetPort: 50050 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tsdb-router
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: tsdb-router }
+  template:
+    metadata:
+      labels: { app: tsdb-router }
+    spec:
+      containers:
+        - name: tsdb-router
+          image: ghcr.io/example/tsdb:latest
+          command: ["/usr/local/bin/tsdb_router"]
+          env:
+            - name: TSDB_LISTEN
+              value: "0.0.0.0:50050"
+            - name: TSDB_REPLICAS
+              value: "2"
+            - name: TSDB_NODES
+              value: >-
+                tsdb-node-0=tsdb-node-0.tsdb-nodes:50051,
+                tsdb-node-1=tsdb-node-1.tsdb-nodes:50051,
+                tsdb-node-2=tsdb-node-2.tsdb-nodes:50051,
+                tsdb-node-3=tsdb-node-3.tsdb-nodes:50051,
+                tsdb-node-4=tsdb-node-4.tsdb-nodes:50051,
+                tsdb-node-5=tsdb-node-5.tsdb-nodes:50051,
+                tsdb-node-6=tsdb-node-6.tsdb-nodes:50051,
+                tsdb-node-7=tsdb-node-7.tsdb-nodes:50051
+          ports:
+            - { name: grpc, containerPort: 50050 }
+          resources:
+            requests: { cpu: "500m", memory: "256Mi" }
+            limits:   { cpu: "1", memory: "512Mi" }
