@@ -1,0 +1,32 @@
+# Local 3-node cluster + router, mirroring the Kubernetes topology. Useful for
+# end-to-end testing without a cluster:
+#   docker compose up --build
+#   docker compose run --rm loadgen loadgen router:50050 1000 1000 50
+services:
+  node0:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    command: ["/usr/local/bin/tsdb_node"]
+    environment: { TSDB_NODE_ID: node0, TSDB_LISTEN: "0.0.0.0:50051" }
+  node1:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    command: ["/usr/local/bin/tsdb_node"]
+    environment: { TSDB_NODE_ID: node1, TSDB_LISTEN: "0.0.0.0:50051" }
+  node2:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    command: ["/usr/local/bin/tsdb_node"]
+    environment: { TSDB_NODE_ID: node2, TSDB_LISTEN: "0.0.0.0:50051" }
+  router:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    command: ["/usr/local/bin/tsdb_router"]
+    environment:
+      TSDB_LISTEN: "0.0.0.0:50050"
+      TSDB_REPLICAS: "2"
+      TSDB_NODES: "node0=node0:50051,node1=node1:50051,node2=node2:50051"
+    ports: ["50050:50050"]
+    depends_on: [node0, node1, node2]
+  loadgen:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    entrypoint: ["/usr/local/bin/loadgen"]
+    command: ["router:50050", "1000", "1000", "50"]
+    depends_on: [router]
+    profiles: ["tools"]

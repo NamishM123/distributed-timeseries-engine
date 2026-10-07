@@ -1,0 +1,61 @@
+# Storage nodes run as a StatefulSet so each pod has a stable network identity
+# (tsdb-node-0 .. tsdb-node-N) that the router can address directly. A headless
+# Service provides per-pod DNS.
+#
+# Self-healing timing (the "~20s" figure):
+#   livenessProbe period 5s x failureThreshold 3  = ~15s to detect a wedged pod
+#   + pod restart and readiness (~5s)              = ~20s to full recovery.
+# Independently, the router's own health loop (2s period, 2 misses) drops a dead
+# node from the hash ring in ~3-4s, so reads fail over to replicas long before
+# Kubernetes finishes rescheduling — recovery is transparent to clients.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tsdb-nodes
+  labels: { app: tsdb-node }
+spec:
+  clusterIP: None            # headless: DNS returns each pod's own A record
+  selector: { app: tsdb-node }
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tsdb-node
+spec:
+  serviceName: tsdb-nodes
+  replicas: 3                # scaled 3 -> 8 by the HPA
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: { app: tsdb-node }
+  template:
+    metadata:
+      labels: { app: tsdb-node }
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: tsdb-node
+          image: ghcr.io/example/tsdb:latest
+          command: ["/usr/local/bin/tsdb_node"]
+          env:
+            - name: TSDB_NODE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: TSDB_LISTEN
+              value: "0.0.0.0:50051"
+          ports:
+            - { name: grpc, containerPort: 50051 }
+          readinessProbe:
+            grpc: { port: 50051 }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            grpc: { port: 50051 }
+            periodSeconds: 5
+            failureThreshold: 3
+            timeoutSeconds: 2
+          resources:
+            requests: { cpu: "1", memory: "1Gi" }
+            limits:   { cpu: "2", memory: "2Gi" }
